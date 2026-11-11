@@ -1,0 +1,7 @@
+*.class
+out/
+data/*.db
+data/backup/
+.vscode/
+.idea/
+*.iml
