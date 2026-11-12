@@ -114,6 +114,7 @@ public class TradingApp extends Application {
         stage.setTitle("Stock Trading Platform - " + user.getUsername());
         stage.setScene(new Scene(root, 1180, 640));
         stage.show();
+        stage.toFront();    // the AWT login window just closed, make sure this one gets focus
 
         refreshAccount();
         startPriceThread();

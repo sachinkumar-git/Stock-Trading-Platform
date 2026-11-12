@@ -22,13 +22,31 @@ public class Main {
 
         if (args.length > 0) {
             // username given on command line, skip login (handy while testing)
-            username = args[0];
+            username = args[0].trim();
+            if (!LoginFrame.isValidUsername(username)) {
+                System.out.println("Invalid username \"" + args[0]
+                        + "\". Only letters, digits and _ are allowed.");
+                System.exit(1);
+            }
         } else {
-            LoginFrame login = new LoginFrame();
-            username = login.waitForUsername();     // blocks till login is done
+            // opens the AWT login window and blocks till login is done
+            username = LoginFrame.showAndWait();
+            if (username == null) {
+                System.out.println("Login cancelled.");
+                return;
+            }
         }
 
-        // starts JavaFX and calls TradingApp.start(). Username is passed as a parameter.
-        Application.launch(TradingApp.class, username);
+        // Starts JavaFX and calls TradingApp.start(). Username is passed as a parameter.
+        // This is the only place JavaFX is launched, and launch() can run only once per program.
+        // It blocks until the JavaFX window is closed.
+        try {
+            Application.launch(TradingApp.class, username);
+        } catch (RuntimeException e) {
+            // e.g. an exception thrown inside TradingApp.start() - report it instead of failing silently
+            System.out.println("Could not start the trading window: " + e);
+            e.printStackTrace();
+            System.exit(1);
+        }
     }
 }

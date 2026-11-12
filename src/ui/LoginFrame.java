@@ -2,6 +2,7 @@ package ui;
 
 import java.awt.Button;
 import java.awt.Color;
+import java.awt.EventQueue;
 import java.awt.Font;
 import java.awt.Frame;
 import java.awt.GridLayout;
@@ -13,6 +14,7 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.lang.reflect.InvocationTargetException;
 
 // Small login window made with AWT.
 // Delegation event model: the component (source) does not handle the event itself,
@@ -20,14 +22,29 @@ import java.awt.event.WindowEvent;
 //   source   -> loginButton, nameField, the frame
 //   event    -> ActionEvent, KeyEvent, WindowEvent
 //   listener -> this class (ActionListener), KeyAdapter, WindowAdapter
+//
+// Threads involved:
+//   main thread      -> calls showAndWait() and sleeps in wait() until the user is done
+//   AWT event thread -> builds the window, handles the click, closes the window,
+//                       then wakes the main thread with notifyAll()
+// The two threads share "username" and "finished", always guarded by "lock".
 public class LoginFrame extends Frame implements ActionListener {
+
+    private static final String VALID_NAME = "[A-Za-z0-9_]+";
 
     private final TextField nameField = new TextField(20);
     private final Label errorLabel = new Label("", Label.CENTER);
 
-    private String username;    // stays null until a valid name is entered
+    // Separate private object used as the monitor for wait()/notifyAll().
+    // We must NOT use the frame itself ("this"): AWT locks the Frame object internally
+    // (e.g. Frame.getState() is synchronized), so holding that lock while asking the
+    // event thread to dispose the window makes both threads wait for each other forever.
+    private final Object lock = new Object();
+    private String username;        // set once a valid name is entered, null if cancelled
+    private boolean finished;       // true after login or after the window is closed
 
-    public LoginFrame() {
+    // Private: build the window only through showAndWait(), which does it on the event thread.
+    private LoginFrame() {
         super("Stock Trading Platform - Login");
 
         setLayout(new GridLayout(4, 1, 5, 5));
@@ -65,13 +82,42 @@ public class LoginFrame extends Frame implements ActionListener {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                System.exit(0);
+                finish(null);       // user closed the window: login cancelled
             }
         });
 
         setSize(360, 200);
         setLocationRelativeTo(null);    // centre of the screen
-        setVisible(true);
+    }
+
+    // Shows the login window and blocks the calling thread until the user logs in.
+    // Returns the username, or null if the window was closed without logging in.
+    // Must not be called on the AWT event thread, because that thread has to stay
+    // free to handle the clicks we are waiting for.
+    public static String showAndWait() {
+        if (EventQueue.isDispatchThread()) {
+            throw new IllegalStateException("showAndWait() must not be called on the AWT event thread");
+        }
+
+        LoginFrame[] holder = new LoginFrame[1];
+        try {
+            // AWT components should be created and shown on the event thread
+            EventQueue.invokeAndWait(() -> {
+                holder[0] = new LoginFrame();
+                holder[0].setVisible(true);
+                holder[0].nameField.requestFocus();
+            });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (InvocationTargetException e) {
+            throw new IllegalStateException("Could not open the login window", e.getCause());
+        }
+        return holder[0].waitForUsername();
+    }
+
+    public static boolean isValidUsername(String name) {
+        return name != null && name.matches(VALID_NAME);
     }
 
     // from ActionListener - runs when Login button is clicked
@@ -80,34 +126,56 @@ public class LoginFrame extends Frame implements ActionListener {
         tryLogin();
     }
 
-    private synchronized void tryLogin() {
+    // runs on the AWT event thread (button click or Enter key)
+    private void tryLogin() {
         String text = nameField.getText().trim();
 
         if (text.isEmpty()) {
             errorLabel.setText("Username cannot be empty");
             return;
         }
-        if (!text.matches("[A-Za-z0-9_]+")) {
+        if (!isValidUsername(text)) {
             errorLabel.setText("Only letters, digits and _ allowed");
             return;
         }
 
-        username = text;
-        notify();   // wake up the main thread waiting in waitForUsername()
+        finish(text);
     }
 
-    // main thread calls this and sleeps here until the user logs in.
-    // The click is handled on AWT's own event thread, which then calls notify().
-    public synchronized String waitForUsername() {
-        while (username == null) {
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return "guest";
+    // Runs on the AWT event thread. Closes the window and wakes the waiting main thread.
+    // dispose() is called here, on the event thread and without holding "lock",
+    // so it can never block on the main thread.
+    private void finish(String name) {
+        synchronized (lock) {
+            if (finished) {
+                return;     // double click / Enter + click: only the first one counts
             }
         }
+
         dispose();      // close the login window
-        return username;
+
+        synchronized (lock) {
+            username = name;
+            finished = true;
+            lock.notifyAll();   // wake up the main thread waiting in waitForUsername()
+        }
+    }
+
+    // Main thread sleeps here until the user logs in or closes the window.
+    // wait() is inside a while loop because a thread can wake up without being
+    // notified (spurious wakeup), so the condition is checked again every time.
+    private String waitForUsername() {
+        synchronized (lock) {
+            while (!finished) {
+                try {
+                    lock.wait();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    EventQueue.invokeLater(this::dispose);  // don't leave the window open
+                    return null;
+                }
+            }
+            return username;
+        }
     }
 }
