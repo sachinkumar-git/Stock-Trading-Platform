@@ -156,6 +156,6 @@ Each trade updates `users`, `holdings` and `transactions` inside a single databa
 - Login uses a username only; there is no password.
 - The run script targets Windows, and the bundled JavaFX jars are the Windows builds.
 
-## Authors
+
 
 <!-- Add your name(s), roll number(s) and section here -->
