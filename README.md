@@ -48,7 +48,7 @@ From the project folder:
 The script compiles the sources into `out` and starts the application. To skip the login window, pass a username:
 
 ```
-.\run.bat sachin
+.\run.bat username
 ```
 
 The database file `data/trading.db` is created automatically on first run.
